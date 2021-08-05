@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/openlayers/openlayers.github.io@master/en/v6.1.1/css/ol.css" type="text/css">
+    <style>
+      .map {
+        height: 80vh;
+        width: 100%;
+        border: 2px solid rgba(0,0,0,0.3);
+      }
+      .ol-full-screen {
+        left: .5em;
+        top: 7.156em; /* em spacing between controls is 2.513 */
+        right: unset;
+      }
+      .dropzone {
+        overflow-y: auto;
+        overflow-x: hidden;
+        text-align: center;
+        grid-area: dropzone;
+      }
+      .button.is-primary {
+        background-color: #7f9dc3 !important;
+      }
+      /* grid layout */
+      #grid {
+        max-height: 80vh;
+        display: grid;
+        grid-template-columns: 2fr 7fr;
+        grid-template-rows: min-content 1fr;
+        grid-template-areas: 
+          "config map"
+          "dropzone map";
+        grid-column-gap: 20px;
+        grid-row-gap: 20px;
+      }
+      #map {
+        grid-area: map;
+      }
+      #config {
+        grid-area: config;
+      }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dropzone/5.5.1/min/dropzone.min.js"></script>
+    <script src="http://cdn.jsdelivr.net/gh/seikichi/tiff.js/tiff.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/openlayers/openlayers.github.io@master/en/v6.1.1/build/ol.js"></script>
+    
+    <!-- Format-related -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/dropzone/5.5.1/min/dropzone.min.css" type="text/css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.8.0/css/bulma.min.css">
+    <script defer src="https://use.fontawesome.com/releases/v5.3.1/js/all.js"></script>
+
+    <title>CD138 Plasma Cell Detection</title>
+  </head>
+  <body>
+  
+    <!-- Dropzone template start -->
+    <div id="dropzoneTemplate" style="display:none;">
+      <div class="dz-preview dz-file-preview">
+        <div class="dz-image">
+          <img data-dz-thumbnail />
+        </div>
+        <div class="dz-details">
+          <div class="dz-filename"><span data-dz-name></span></div>
+          <div class="dz-size" data-dz-size></div>
+        </div>
+        <div class="dz-progress"><span class="dz-upload" data-dz-uploadprogress></span></div>
+        <div class="dz-error-message"><span data-dz-errormessage></span></div>
+        <div class="dz-success-mark"><span>✔</span></div>
+        <div class="dz-error-mark"><span>✘</span></div>
+      </div>
+    </div>
+    <!-- Dropzone template end -->
+
+    <section class="section">
+      <div class="container">
+        <h1 class="title">CD138+ Plasma Cell Detection Tool</h1>
+        <p class="content">
+          <strong>Instructions</strong>: Enter the resolution of your image in the field below and subsequently upload the images to the upload box by clicking or dragging files into it. 
+            Uploaded images will be scaled and processed accordingly by the detection model. Once complete, the number of CD138+ and CD138- cells that were counted will be shown, along with the percentage of positive cells.
+            To view the individual detections (recommended), click "Show results" under its thumbnail image.
+        </p>
+        <div class="container" id="grid">
+          <!-- grid: config -->
+          <div id="config">
+            <div class="field">
+              <label class="label">Image resolution:</label>
+              <div class="field has-addons">
+                <p class="control is-expanded">
+                  <input class="input" id="mpp" type="number" value="0.125" min=0 step="any" placeholder="Enter a value...">
+                </p>
+                <p class="control">
+                  <a class="button is-static">
+                    μm/px
+                  </a>
+                </p>
+              </div>
+            </div>
+          </div>
+          <!-- grid: dropzone -->
+          <form action="/run" class="dropzone dz-clickable" id="imageUploader">
+            <div class="dz-message">Drop images here or click to upload.</div>
+          </form>
+          <!-- grid: map -->
+          <div id="map" class="map"></div>
+        </div>
+      </div>
+    </section>
+
+    <script type="text/javascript">
+      // Allow processing large TIFFs in browser
+      Tiff.initialize({TOTAL_MEMORY: 20000000});  
+
+      // Generate map
+      // This is just a default placeholder, should ignore?
+      const padding = 250;
+      
+      // Pre-defining feature styles
+      var positiveStyle = [
+        new ol.style.Style({
+          image: new ol.style.Circle({
+            fill: new ol.style.Fill({
+              color: "rgba(255,0,0,0.4)"
+            }),
+            stroke: new ol.style.Stroke({
+              color: "rgba(255,0,0,1)",
+              width: 1.25
+            }),
+            radius: 5,
+          }),
+        })
+      ];
+
+      var negativeStyle = [
+        new ol.style.Style({
+          image: new ol.style.Circle({
+            fill: new ol.style.Fill({
+              color: "rgba(0,0,255,0.4)"
+            }),
+            stroke: new ol.style.Stroke({
+              color: "rgba(0,0,255,1)",
+              width: 1.25
+            }),
+            radius: 5,
+          }),
+        })
+      ];
+      
+      // Style for dragging / adding new points
+      var editStyle = [
+        new ol.style.Style({
+          image: new ol.style.Circle({
+            fill: new ol.style.Fill({ color: "yellow" }),
+            stroke: new ol.style.Stroke({
+              color: "white",
+              width: 1.25
+            }),
+            radius: 6,
+          }),
+        })
+      ];
+      
+      var map = new ol.Map({
+        interactions: ol.interaction.defaults({ doubleClickZoom: false }),
+        controls: ol.control.defaults({
+          // Use attribution control to show image name
+          attributionOptions: {collapsible: false}
+        }).extend([
+          new ol.control.ScaleLine(),
+          new ol.control.ZoomToExtent(),
+          new ol.control.FullScreen(),
+          // new ol.control.MousePosition() // for debugging coordinates
+        ]),
+        target: 'map',
+        layers: [],
+      });
+      // Add double-click to reset view event
+      map.on("dblclick", function(evt) {
+        const extent = get_layer_extent(map);
+        map.getView().fit(extent, {size: map.getSize(), duration: 50});
+      });
+      
+      // look at ol.attribution class for ideas for placement of new elements?
+
+      /**
+       * Get image extent for a layer at the specified index (defaults to first).
+       */
+      function get_layer_extent(map, layerIdx=0) {
+        return map.getLayers().item(layerIdx).getSource().getProjection().getExtent()
+      }
+
+      /**
+       * Show image to a map element.
+       * map - the map element.
+       * src - URL or DataURI of image to be shown
+       * w, h - width and height of image
+       * resolution - m/px (e.g. 0.25*1e-6 for 0.25 um/px)
+       */
+      function show_map_image(map, src, w, h, label, resolution=1) {
+        const extent = [0, 0, w, h];
+        const projection = new ol.proj.Projection({
+          code: "image",
+          units: "pixels", 
+          extent: extent,
+          // axisOrientation: "esu", // thought this might flip coordinate systems but it doesn't work...
+          metersPerUnit: resolution,
+          getPointResolution: function(resolution) {
+            // Override default to not modify the resolution
+            return resolution;
+          }
+        });
+        const view = new ol.View({
+          projection: projection,
+          center: ol.extent.getCenter(extent),
+          zoom: 1,
+          // Resolution here is basically the zoom, 1 = 100%
+          minResolution: 0.5,
+          maxResolution: 10,
+          // The view extent limits the amount of pan to prevent going out of bounds.
+          extent: extent,
+          constrainOnlyCenter: true,
+        });
+        const imageLayer = new ol.layer.Image({
+          source: new ol.source.ImageStatic({
+              // note dataURIs work here as well, I have checked...
+              url: src,
+              projection: projection,
+              imageExtent: extent,
+              attributions: label,
+            })
+        });
+        map.addLayer(imageLayer);
+        map.setView(view);
+        // Auto-fit view to size of the map
+        map.getView().fit(extent);
+      }
+
+      /** 
+       * Show features on map.
+       */
+      function show_map_point_features(map, x, y, label, style) {
+        // Create vector source
+        const n = x.length;
+        const pointFeatures = Array.from(
+          [...Array(n).keys()],
+          i => { 
+            return new ol.Feature({
+              geometry: new ol.geom.Point([x[i], y[i]]),
+              label: label
+            })
+          }
+        );
+        var vectorSource = new ol.source.Vector({});
+        vectorSource.addFeatures(pointFeatures);
+        // Create vector layer
+        const extent = get_layer_extent(map)
+        const vectorLayer = new ol.layer.Vector({
+          source: vectorSource,
+          style: style,
+          renderBuffer: Math.max(...extent)  // Need to set this to prevent rendered features from disappearing when panning around.
+        })
+        map.addLayer(vectorLayer);
+
+        // Add Modify interactions with this point feature
+        map.addInteraction(
+          new ol.interaction.Modify({source: vectorSource, style: editStyle})
+        )
+        // Snap must be added last
+        map.addInteraction(
+          new ol.interaction.Snap({source: vectorSource})
+        )
+      }
+
+      /** 
+       * Clear all layers from a map element.
+       */
+      function clear_map_layers(map) {
+        map.setLayerGroup(new ol.layer.Group());
+      }
+
+      // Create dropzone
+      Dropzone.options.imageUploader = {
+        paramName: "image", // The name that will be used to transfer the file
+        maxFilesize: 20, // MB
+        acceptedFiles: "image/*",
+        // params: {"scale": "0.5"},
+        timeout: 120*1000,  // milliseconds
+        parallelUploads: 1,
+        addRemoveLinks: true,
+        autoProcessQueue: false,
+        autoQueue: false,
+        // previewTemplate: document.querySelector("#dropzoneTemplate").innerHTML,
+        init: function() {
+          // add event listeners here
+          // this.disable()
+          this.on("sending", (file, xhr, formData) => {
+            // Append additional parameters to form
+            const mpp = document.getElementById("mpp").value;
+            formData.append("mpp", mpp);
+            console.log(formData);
+          })
+          // addedfile: if TIFF, convert to browser-compatible PNG on client
+          this.on("addedfile", (file) => {
+            // console.log(file);
+            if (file.type == "image/tiff") {
+              file.arrayBuffer().then((buffer) => {
+                let tiff = new Tiff({buffer: buffer});
+                file.dataURL = tiff.toDataURL();
+                file.width = tiff.width();
+                file.height = tiff.height();
+                console.log("Finished converting TIFF, processing.")
+                this.processFile(file);
+                this.createThumbnailFromUrl(file, 
+                  this.options.thumbnailWidth,
+                  this.options.thumbnailHeight,
+                  this.options.thumbnailMethod,
+                  false,  /* don't fix orientation */
+                  (thumbnail) => {
+                    this.emit("thumbnail", file, thumbnail)
+                });
+              });
+            } else {
+              console.log("Not tiff, processing.")
+              this.processFile(file);
+            }
+          });
+
+          // success: create button to show plot
+          this.on("success", (file, res) => {
+            let resultsElement = Dropzone.createElement(
+              `<a class="dz-remove" href="javascript:undefined;">Show results</a>`
+            );
+            resultsElement.onclick = function() {
+              clear_map_layers(map);
+              // clear interactions from previous maps
+              // this is a hack -  (Modify + Snap) * 2 layers = 4 interactions
+              // can't just clear interactions b/c they rely on it for panning
+              if (map.getInteractions().getLength() > 8) {
+                map.getInteractions().pop(); 
+                map.getInteractions().pop(); 
+                map.getInteractions().pop(); 
+                map.getInteractions().pop(); 
+              }
+              show_map_image(map, file.dataURL, file.width, file.height, file.name, 0.25*1e-6);
+              // Need to flip y values because OpenLayers coordinate system is bottom-left (0,0)
+              show_map_point_features(map, res.negative.x, res.negative.y.map((val, idx) => file.height - val), "Negative", negativeStyle);
+              show_map_point_features(map, res.positive.x, res.positive.y.map((val, idx) => file.height - val), "Positive", positiveStyle);
+            };
+            
+            let nblue = res.negative.x.length;
+            let nbrown = res.positive.x.length;
+            let pctPositive = nbrown / (nbrown + nblue) * 100;
+            let stats = Dropzone.createElement(
+              `<div style="text-align:center;">${nbrown} (+) / ${nblue} (-)<br/><strong>${pctPositive.toFixed(2)}%+</strong></div>`
+            )
+            file.previewElement.appendChild(stats);
+            file.previewElement.appendChild(resultsElement);
+          })
+
+        }
+      };
+      
+      
+    </script>
+  </body>
+</html>
