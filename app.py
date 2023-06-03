@@ -1,9 +1,6 @@
-"""API using Flask. Run in development mode with:
-set FLASK_APP=app.py
-flask run
-"""
+"""API using Flask. Run in development mode with: flask run"""
 
-from flask import Flask, json, jsonify, request, abort, send_from_directory
+from flask import Flask, jsonify, request, abort, render_template
 from werkzeug.utils import secure_filename
 
 from pathlib import Path
@@ -11,8 +8,6 @@ import datetime
 import torch
 import torchvision.transforms as transforms
 from PIL import Image
-from base64 import b64encode
-from io import BytesIO
 
 from mmdetect.model.unetvgg import UNetVGG
 from mmdetect.model.postprocess import model_output_to_points
@@ -22,7 +17,7 @@ UPLOAD_DIR = r"web/uploads"
 MODEL_PATH = r"model/trained_model.pth"
 
 # Setup
-app = Flask(__name__)
+app = Flask(__name__, static_folder="web/static", template_folder="web")
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print("device:", DEVICE)
 MODEL = UNetVGG("vgg13_bn", 3)
@@ -60,7 +55,7 @@ def process_image(im_pil):
 
 @app.route("/")
 def index():
-    return send_from_directory("", "web/index.html")
+    return render_template('index.html')
 
 
 @app.route("/run", methods=["POST"])
