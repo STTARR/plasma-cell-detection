@@ -25,6 +25,6 @@ def model_output_to_points(out, median=3, blur=3, min_distance=10, flood_fill_br
         blue_cells = any_cells ^ brown_cells
     else:
         blue_cells = out.argmax(dim=0) == 1
-    brown_cells_yx = peak_local_max(postprocess(brown_cells.float() * out[2], median, blur), min_distance=min_distance, indices=True)
-    blue_cells_yx = peak_local_max(postprocess(blue_cells.float() * out[2], median, blur), min_distance=min_distance, indices=True)
+    brown_cells_yx = peak_local_max(postprocess(brown_cells.float() * out[2], median, blur), min_distance=min_distance)
+    blue_cells_yx = peak_local_max(postprocess(blue_cells.float() * out[2], median, blur), min_distance=min_distance)
     return blue_cells_yx, brown_cells_yx

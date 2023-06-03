@@ -62,7 +62,7 @@ class UNetVGG(nn.Module):
     
     def _init_encoder(self):
         """Initialize encoder and middle block of U-Net-style architecture with vggmodel."""
-        vggmodel = getattr(models.vgg, self.vggname)(pretrained=True)
+        vggmodel = getattr(models.vgg, self.vggname)(weights=models.VGG13_BN_Weights.IMAGENET1K_V1)
         features = vggmodel.features
         
         encoders = []
